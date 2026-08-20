@@ -9,91 +9,30 @@ on:
 jobs:
   android:
     runs-on: ubuntu-24.04
-    env:
-      # SDK root is placed in runner.temp to avoid touching the runner's global SDK
-      ANDROID_SDK_ROOT: ${{ runner.temp }}/android-sdk
-      ANDROID_HOME: ${{ runner.temp }}/android-sdk
-      ANDROID_NDK_VERSION: 27.2.12479018
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup JDK
-        uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: 17
-
-      - name: Install OS packages
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y unzip curl cmake ninja-build python3 python3-venv
-
-      - name: Install Android command-line tools and SDK packages
-        # Uses ANDROID_SDK_ROOT from job env
-        run: |
-          set -euo pipefail
-
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-
-          mkdir -p "$ANDROID_SDK_ROOT"
-          cd /tmp
-
-          # Download command line tools (version in URL may be updated; this one is stable as of 2024-2026)
-          CMDLINE_ZIP=commandlinetools-linux-latest.zip
-          echo "Downloading Android command-line tools..."
-          curl -fsSL -o "$CMDLINE_ZIP" "https://dl.google.com/android/repository/commandlinetools-linux-9477386_latest.zip"
-
-          rm -rf "$ANDROID_SDK_ROOT/cmdline-tools"
-          mkdir -p "$ANDROID_SDK_ROOT/cmdline-tools"
-          unzip -q "$CMDLINE_ZIP"
-          # The zip creates a "cmdline-tools" dir containing "bin", "lib", etc.; move it under 'latest'
-          mv cmdline-tools "$ANDROID_SDK_ROOT/cmdline-tools/latest"
-
-          export PATH="$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$PATH"
-
-          # Accept licenses and install needed packages (non-interactive)
-          yes | sdkmanager --sdk_root="$ANDROID_SDK_ROOT" --licenses || true
-
-          sdkmanager --sdk_root="$ANDROID_SDK_ROOT" "platforms;android-34" "build-tools;34.0.0" "ndk;${ANDROID_NDK_VERSION}"
-
-      - name: Setup xmake
-        uses: xmake-io/github-action-setup-xmake@v1
+      - uses: actions/checkout@v4
+      - uses: android-actions/setup-android@v3
+      - run: sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;27.2.12479018"
+      - run: sudo apt-get update && sudo apt-get install -y cmake ninja-build python3
+      - uses: xmake-io/github-action-setup-xmake@v1
         with:
           xmake-version: latest
-
       - name: Configure
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
-          set -euo pipefail
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
           xmake f -p android -a arm64-v8a -m release -y
-
       - name: Build
-        env:
-          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/${{ env.ANDROID_NDK_VERSION }}
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
-          set -euo pipefail
           export ANDROID_HOME="$ANDROID_SDK_ROOT"
-          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}"
+          export ANDROID_NDK_HOME="$ANDROID_SDK_ROOT/ndk/27.2.12479018"
           xmake -y
-
       - name: Package levipack
-        env:
-          ANDROID_HOME: ${{ env.ANDROID_SDK_ROOT }}
         run: |
-          set -euo pipefail
           python3 - <<'PY'
-          import json, zipfile, sys
+          import json, zipfile
           from pathlib import Path
           lib = Path('build/android/arm64-v8a/release/libDamageTint.so')
-          if not lib.exists():
-              print("ERROR: expected library not found:", lib, file=sys.stderr)
-              sys.exit(2)
           out = lib.with_name('DamageTint.levipack')
           manifest = {
               'type': 'preload-native', 'name': 'Damage Tint', 'author': 'xiomi',
@@ -104,13 +43,11 @@ jobs:
           with zipfile.ZipFile(out, 'w', zipfile.ZIP_DEFLATED, compresslevel=9) as z:
               z.writestr('manifest.json', json.dumps(manifest, indent=2) + '\n')
               z.write(lib, 'libDamageTint.so')
-          print("Created", out)
           PY
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: DamageTint-android-arm64
           path: |
             build/android/arm64-v8a/release/libDamageTint.so
             build/android/arm64-v8a/release/DamageTint.levipack
+
